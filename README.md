@@ -1,24 +1,23 @@
 # 🧠 DocuMind - Agentic Document Automation System
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-DocuMind is a production-ready, modular AI system for intelligent document automation. It combines the **Model Context Protocol (MCP)** for agent orchestration, **Haystack** for RAG-based retrieval, and **open-source Hugging Face LLMs** for local inference—no paid APIs required.
+DocuMind is a production-ready, modular AI system for intelligent document automation. It combines the **Model Context Protocol (MCP)** for agent orchestration, **Haystack** for RAG-based retrieval, and **open-source Hugging Face LLMs** for local inference.
 
 ## 🎯 Features
 
-- 📄 **Multi-format Support**: Process PDF, DOCX, and TXT documents
-- 🤖 **Agentic Architecture**: Coordinated agents using MCP protocol
-- � **Intelligent Chat Interface**: Natural conversation with intent detection
-- �🔍 **Intelligent Retrieval**: Hybrid search with BM25 + semantic embeddings
-- 🧠 **Flexible LLM Options**: 
-  - ⚡ **Cerebras API** (fastest): Ultra-fast inference with cutting-edge models
-  - ☁️ **Hugging Face API** (recommended): No downloads, instant start
-  - 💻 **Local Models**: Complete privacy, offline capable
-- 📊 **Document Classification**: Automatic categorization and metadata extraction
-- ✍️ **Template Automation**: Auto-fill reports, invoices, and summaries
-- 🌐 **REST API**: FastAPI endpoints for programmatic access
-- 💻 **Web UI**: Streamlit interface for easy interaction
+- **Multi-format Support**: Process PDF, DOCX, and TXT documents
+- **Agentic Architecture**: Coordinated agents using MCP protocol
+- **Intelligent Chat Interface**: Natural conversation with intent detection
+- **Intelligent Retrieval**: Hybrid search with BM25 + semantic embeddings
+- **Flexible LLM Options**: 
+  - **Cerebras API** (fastest): Ultra-fast inference with cutting-edge models
+  - **Hugging Face API** (recommended): No downloads, instant start
+  - **Local Models**: Complete privacy, offline capable
+- **Document Classification**: Automatic categorization and metadata extraction
+- **Template Automation**: Auto-fill reports, invoices, and summaries
+- **REST API**: FastAPI endpoints for programmatic access
+- **Web UI**: Streamlit interface for easy interaction
 
 ## 🏗️ Architecture
 
@@ -57,7 +56,7 @@ DocuMind/
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/documind.git
+git clone https://github.com/Ghouma-workspace/Documind_MCP.git
 cd documind
 ```
 
@@ -130,10 +129,6 @@ USE_HF_INFERENCE_API=False
 MODEL_NAME=mistralai/Mistral-7B-Instruct-v0.2
 DEVICE=cpu  # or cuda for GPU
 ```
-
-📖 **Detailed Guides**: 
-- [CEREBRAS_SETUP.md](CEREBRAS_SETUP.md) for Cerebras API configuration
-- [HF_API_GUIDE.md](HF_API_GUIDE.md) for Hugging Face API setup
 
 **Other Settings:**
 ```env
