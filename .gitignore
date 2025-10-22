@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+
+# Virtual Environment
+.venv/
+
+# IDE
+.vscode/
+
+# Environment
+.env
+
+# Data
+data/documents/*
+!data/documents/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+data/faiss_index/
+data/document_store/
+
+# Models
+models/
+*.bin
+*.safetensors
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+docker-compose.yml
+Dockerfile
