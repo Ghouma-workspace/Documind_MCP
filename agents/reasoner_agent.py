@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 from agents.base_agent import BaseAgent
+from app.api.query import run_query
 from mcp.protocol import (
     MCPMessage,
     MCPProtocol,
@@ -407,7 +408,7 @@ class ReasonerAgent(BaseAgent):
                 docs_used = 0
             
             elif intent == "question":
-                response_text, actions, docs_used = await self._handle_question(user_message, message)
+                response_text, actions, docs_used = await self._handle_question(user_message)
             
             elif intent == "summarize":
                 response_text, actions, docs_used = await self._handle_summarize(user_message, message)
@@ -488,29 +489,15 @@ class ReasonerAgent(BaseAgent):
         
         return response, ["greeting_acknowledged"]
     
-    async def _handle_question(self, user_message: str, original_message: MCPMessage) -> tuple[str, list, int]:
+    async def _handle_question(self, user_message: str) -> tuple[str, list, int]:
         """Handle question about documents"""
         self.log_info("Processing question with document retrieval")
         
-        # Create retrieval request
-        retrieval_msg = self.protocol.create_message(
-            message_type=MessageType.RETRIEVAL_REQUEST,
-            sender=self.agent_type,
-            receiver=AgentType.RETRIEVER,
-            payload={
-                "query": user_message,
-                "top_k": 3,
-                "retrieval_mode": "hybrid"
-            }
-        )
-        
-        # Send to retriever (in real implementation, would use router)
-        # For now, we'll return a placeholder response
-        response = f"I found information related to your question: '{user_message}'. Based on the documents, I can provide you with relevant details. Would you like me to elaborate on any specific aspect?"
+        result = await run_query(user_message, top_k=3)
+        response_text = result.answer
         actions = ["retrieve_documents", "generate_answer"]
-        docs_used = 3
-        
-        return response, actions, docs_used
+        docs_used = len(result.sources)
+        return response_text, actions, docs_used
     
     async def _handle_summarize(self, user_message: str, original_message: MCPMessage) -> tuple[str, list, int]:
         """Handle summarization request"""

@@ -13,6 +13,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.api.query import QueryRequest, QueryResponse, run_query
 from mcp.protocol import AgentType, MessageType, TaskType
 
 logger = logging.getLogger(__name__)
@@ -35,19 +36,6 @@ class ChatResponse(BaseModel):
     actions_taken: List[str]
     documents_used: int
     conversation_id: Optional[str] = None
-
-
-class QueryRequest(BaseModel):
-    """Query request model"""
-    question: str = Field(..., description="Question to answer")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of documents to retrieve")
-
-
-class QueryResponse(BaseModel):
-    """Query response model"""
-    answer: str
-    sources: List[Dict[str, Any]]
-    confidence: Optional[float] = None
 
 
 class SummarizeRequest(BaseModel):
@@ -170,7 +158,7 @@ async def chat(request: ChatRequest = Body(...)):
         # Create MCP chat message
         chat_msg = app_state.mcp_protocol.create_message(
             message_type=MessageType.CHAT_REQUEST,
-            sender=AgentType.AUTOMATION,  # Representing the API
+            sender=AgentType.AUTOMATION,
             receiver=AgentType.REASONER,
             payload={
                 "message": request.message,
@@ -208,95 +196,7 @@ async def query_documents(request: QueryRequest = Body(...)):
     
     Uses hybrid retrieval and local LLM for answering
     """
-    try:
-        app_state = get_app_state()
-        
-        logger.info(f"Query: {request.question}")
-        
-        # Create retrieval message
-        retrieval_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.RETRIEVAL_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.RETRIEVER,
-            payload={
-                "query": request.question,
-                "top_k": request.top_k,
-                "retrieval_mode": "hybrid"
-            }
-        )
-        
-        # Process retrieval
-        retrieval_response = await app_state.retriever_agent.process(retrieval_msg)
-        
-        if retrieval_response.message_type == MessageType.ERROR:
-            raise HTTPException(status_code=500, detail="Retrieval failed")
-        
-        # Extract documents
-        documents = retrieval_response.payload.get("documents", [])
-        
-        if not documents:
-            return QueryResponse(
-                answer="No relevant documents found for your question.",
-                sources=[],
-                confidence=0.0
-            )
-        
-        # Build context from documents
-        context_parts = []
-        sources = []
-        
-        for i, doc in enumerate(documents[:5], 1):
-            context_parts.append(f"[Document {i}]\n{doc['content'][:500]}...\n")
-            sources.append({
-                "id": doc["id"],
-                "file_name": doc["meta"].get("file_name", "Unknown"),
-                "score": doc.get("score", 0.0)
-            })
-        
-        context = "\n".join(context_parts)
-        
-        # Create generation message
-        prompt = f"""Based on the following context, answer the question concisely and accurately.
-
-Context:
-{context}
-
-Question: {request.question}
-
-Answer:"""
-        
-        generation_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.GENERATION_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.GENERATOR,
-            payload={
-                "prompt": prompt,
-                "context": context,
-                "max_length": 300,
-                "temperature": 0.7,
-                "task_type": "answer"
-            }
-        )
-        
-        # Process generation
-        generation_response = await app_state.generator_agent.process(generation_msg)
-        
-        if generation_response.message_type == MessageType.ERROR:
-            raise HTTPException(status_code=500, detail="Generation failed")
-        
-        answer = generation_response.payload.get("generated_text", "Unable to generate answer")
-        
-        return QueryResponse(
-            answer=answer,
-            sources=sources,
-            confidence=None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing query: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return await run_query(request.question, request.top_k)
 
 
 @router.post("/summarize", response_model=SummarizeResponse)
@@ -418,7 +318,7 @@ async def generate_report(request: GenerateReportRequest = Body(...)):
         documents = retrieval_response.payload.get("documents", [])
         
         # Generate report content
-        content_parts = [doc["content"][:500] for doc in documents[:5]]
+        content_parts = [doc["content"] for doc in documents[:5]]
         combined_content = "\n\n".join(content_parts)
         
         prompt = f"""Generate a professional report on: {request.report_topic}
@@ -477,7 +377,7 @@ Report:"""
         return GenerateReportResponse(
             success=payload.get("success", False),
             output_path=payload.get("output_path"),
-            report_preview=report_content[:500] + "..." if len(report_content) > 500 else report_content
+            report_preview=report_content + "..." if len(report_content) > 500 else report_content
         )
         
     except HTTPException:

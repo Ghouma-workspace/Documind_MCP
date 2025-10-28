@@ -248,7 +248,7 @@ Next Meeting: March 22, 2024
     print("-" * 80)
     
     # Build context
-    context = "\n\n".join([doc["content"][:500] for doc in documents])
+    context = "\n\n".join([doc["content"] for doc in documents])
     
     prompt = f"""Based on the following project documents, answer this question concisely:
 
