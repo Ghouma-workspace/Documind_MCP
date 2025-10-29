@@ -9,6 +9,7 @@ from datetime import datetime
 
 from agents.base_agent import BaseAgent
 from app.api.query import run_query
+from app.api.suammarize import run_summarization
 from mcp.protocol import (
     MCPMessage,
     MCPProtocol,
@@ -411,7 +412,7 @@ class ReasonerAgent(BaseAgent):
                 response_text, actions, docs_used = await self._handle_question(user_message)
             
             elif intent == "summarize":
-                response_text, actions, docs_used = await self._handle_summarize(user_message, message)
+                response_text, actions, docs_used = await self._handle_summarize(user_message)
             
             elif intent == "report":
                 response_text, actions, docs_used = await self._handle_report_request(user_message, message)
@@ -499,15 +500,15 @@ class ReasonerAgent(BaseAgent):
         docs_used = len(result.sources)
         return response_text, actions, docs_used
     
-    async def _handle_summarize(self, user_message: str, original_message: MCPMessage) -> tuple[str, list, int]:
+    async def _handle_summarize(self, user_message: str) -> tuple[str, list, int]:
         """Handle summarization request"""
         self.log_info("Processing summarization request")
         
-        response = "I'll create a summary of your documents. Please give me a moment to analyze the key information..."
+        response = await run_summarization(user_message)
         actions = ["retrieve_all_documents", "generate_summary"]
-        docs_used = 10
+        docs_used = response.documents_used
         
-        return response, actions, docs_used
+        return response.summary, actions, docs_used
     
     async def _handle_report_request(self, user_message: str, original_message: MCPMessage) -> tuple[str, list, int]:
         """Handle report generation request"""
