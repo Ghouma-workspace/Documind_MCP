@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 from agents.base_agent import BaseAgent
+from app.api.generate import run_generate
 from app.api.query import run_query
 from app.api.suammarize import run_summarization
 from mcp.protocol import (
@@ -415,7 +416,7 @@ class ReasonerAgent(BaseAgent):
                 response_text, actions, docs_used = await self._handle_summarize(user_message)
             
             elif intent == "report":
-                response_text, actions, docs_used = await self._handle_report_request(user_message, message)
+                response_text, actions, docs_used = await self._handle_report_request(user_message)
             
             else:
                 response_text = "I understand you want to chat, but I'm not sure how to help. I can answer questions about your documents, create summaries, or generate reports. What would you like me to do?"
@@ -510,15 +511,23 @@ class ReasonerAgent(BaseAgent):
         
         return response.summary, actions, docs_used
     
-    async def _handle_report_request(self, user_message: str, original_message: MCPMessage) -> tuple[str, list, int]:
+    async def _handle_report_request(self, topic: str) -> tuple[str, list, int]:
         """Handle report generation request"""
         self.log_info("Processing report generation request")
         
-        response = "I'll generate a comprehensive report for you. This will include retrieving relevant documents, analyzing the content, and creating a structured report. This may take a moment..."
+        response = await run_generate(template="default_report", report_topic=topic, context="project summary", output_format="txt")
         actions = ["retrieve_documents", "generate_report", "fill_template"]
         docs_used = 10
         
-        return response, actions, docs_used
+        # Extract string message from GenerateReportResponse
+        if response.success:
+            message = f"Report generated successfully! Preview:\n\n{response.report_preview}"
+            if response.output_path:
+                message += f"\n\nFull report saved to: {response.output_path}"
+        else:
+            message = "Failed to generate report. Please try again."
+        
+        return message, actions, docs_used
     
     async def _handle_task_response(self, message: MCPMessage) -> MCPMessage:
         """Handle response from delegated task"""

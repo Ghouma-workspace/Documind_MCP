@@ -31,11 +31,11 @@ class SummarizeResponse(BaseModel):
     sources: List[str]
 
 
-async def run_summarization(request: SummarizeRequest) -> SummarizeResponse:
+async def run_summarization(request: str, top_k: int = 10, max_length: int = 512) -> SummarizeResponse:
     try:
         app_state = get_app_state()
         
-        logger.info(f"Summarize query: {request.query}")
+        logger.info(f"Summarize query: {request}")
         
         # Retrieve documents
         retrieval_msg = app_state.mcp_protocol.create_message(
@@ -43,8 +43,8 @@ async def run_summarization(request: SummarizeRequest) -> SummarizeResponse:
             sender=AgentType.REASONER,
             receiver=AgentType.RETRIEVER,
             payload={
-                "query": request.query,
-                "top_k": request.top_k,
+                "query": request,
+                "top_k": top_k,
                 "retrieval_mode": "hybrid"
             }
         )
@@ -90,7 +90,7 @@ Summary:"""
             receiver=AgentType.GENERATOR,
             payload={
                 "prompt": prompt,
-                "max_length": request.max_length,
+                "max_length": max_length,
                 "temperature": 0.7,
                 "task_type": "summarize"
             }

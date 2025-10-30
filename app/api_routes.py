@@ -4,15 +4,15 @@ Defines all API endpoints
 """
 
 import logging
-import asyncio
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Any
 import shutil
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.api.generate import GenerateReportRequest, GenerateReportResponse, run_generate
 from app.api.query import QueryRequest, QueryResponse, run_query
 from app.api.suammarize import SummarizeRequest, SummarizeResponse, run_summarization
 from mcp.protocol import AgentType, MessageType, TaskType
@@ -37,21 +37,6 @@ class ChatResponse(BaseModel):
     actions_taken: List[str]
     documents_used: int
     conversation_id: Optional[str] = None
-
-
-class GenerateReportRequest(BaseModel):
-    """Generate report request model"""
-    template: str = Field(default="default_report", description="Template name")
-    report_topic: Optional[str] = Field(default="project summary", description="Report topic")
-    context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional context")
-    output_format: str = Field(default="markdown", description="Output format (markdown, txt, json)")
-
-
-class GenerateReportResponse(BaseModel):
-    """Generate report response model"""
-    success: bool
-    output_path: Optional[str] = None
-    report_preview: Optional[str] = None
 
 
 class UploadResponse(BaseModel):
@@ -193,7 +178,7 @@ async def summarize_documents(request: SummarizeRequest = Body(...)):
     
     Retrieves relevant documents and generates a comprehensive summary
     """
-    return await run_summarization(request)
+    return await run_summarization(request.query, request.top_k, request.max_length)
 
 
 @router.post("/generate-report", response_model=GenerateReportResponse)
@@ -203,94 +188,12 @@ async def generate_report(request: GenerateReportRequest = Body(...)):
     
     Retrieves relevant information and fills a template
     """
-    try:
-        app_state = get_app_state()
-        
-        logger.info(f"Generating report: {request.template}")
-        
-        # Retrieve documents
-        retrieval_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.RETRIEVAL_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.RETRIEVER,
-            payload={
-                "query": request.report_topic,
-                "top_k": 10,
-                "retrieval_mode": "hybrid"
-            }
-        )
-        
-        retrieval_response = await app_state.retriever_agent.process(retrieval_msg)
-        documents = retrieval_response.payload.get("documents", [])
-        
-        # Generate report content
-        content_parts = [doc["content"] for doc in documents[:5]]
-        combined_content = "\n\n".join(content_parts)
-        
-        prompt = f"""Generate a professional report on: {request.report_topic}
-
-Based on the following information:
-{combined_content}
-
-Create a structured report with:
-1. Executive Summary
-2. Key Findings
-3. Detailed Analysis
-4. Recommendations
-
-Report:"""
-        
-        generation_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.GENERATION_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.GENERATOR,
-            payload={
-                "prompt": prompt,
-                "max_length": 1024,
-                "temperature": 0.7,
-                "task_type": "report"
-            }
-        )
-        
-        generation_response = await app_state.generator_agent.process(generation_msg)
-        report_content = generation_response.payload.get("generated_text", "")
-        
-        # Fill template
-        automation_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.AUTOMATION_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.AUTOMATION,
-            payload={
-                "action": "fill_template",
-                "template_name": request.template,
-                "data": {
-                    "title": request.report_topic,
-                    "content": report_content,
-                    "date": "Generated on " + str(Path(__file__).stat().st_mtime),
-                    "metadata": request.context
-                },
-                "output_format": request.output_format
-            }
-        )
-        
-        automation_response = await app_state.automation_agent.process(automation_msg)
-        
-        if automation_response.message_type == MessageType.ERROR:
-            raise HTTPException(status_code=500, detail="Report generation failed")
-        
-        payload = automation_response.payload
-        
-        return GenerateReportResponse(
-            success=payload.get("success", False),
-            output_path=payload.get("output_path"),
-            report_preview=report_content + "..." if len(report_content) > 500 else report_content
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating report: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return await run_generate(
+        template=request.template,
+        report_topic=request.report_topic,
+        context=request.context,
+        output_format=request.output_format
+    )
 
 
 @router.get("/documents")
