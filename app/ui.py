@@ -127,58 +127,98 @@ def get_stats():
 
 # Main UI
 def main():
-    # Header
-    st.title("🧠 DocuMind")
-    st.markdown("**Agentic Document Automation System**")
-    
+
     # Check API health
     if not check_api_health():
         st.error("⚠️ API is not running! Please start the API server first:")
         st.code("uvicorn app.main:app --reload", language="bash")
         st.stop()
-    
+
     # Sidebar
     with st.sidebar:
-        st.header("📊 System Status")
-        
+
+        st.title("🧠 DocuMind")
+        st.markdown("**Agentic Document Automation System**")
+
         # Get stats
         stats = get_stats()
-        
         if stats:
-            # Document stats
             retriever_stats = stats.get("retriever", {})
             st.metric("Documents Indexed", retriever_stats.get("document_count", 0))
             st.metric("Total Retrievals", retriever_stats.get("total_retrievals", 0))
-            
-            # Generator stats
+
             generator_stats = stats.get("generator", {})
             st.metric("Generations", generator_stats.get("total_generations", 0))
-            
-            # Automation stats
+
             automation_stats = stats.get("automation", {})
             st.metric("Outputs Created", automation_stats.get("outputs_generated", 0))
-        
+
         st.divider()
-        
-        # Navigation
+
+        # Navigation menu
         st.header("🧭 Navigation")
-        page = st.radio(
-            "Select Page",
-            ["📤 Upload Documents", "💬 Query & Chat", "📝 Summarize", "📊 Generate Report", "📁 Browse Files"],
+        main_section = st.radio(
+            "Select Section",
+            ["📁 File Management", "💬 Conversation", "🧰 Document Operations"],
             label_visibility="collapsed"
         )
-    
-    # Main content area
-    if page == "📤 Upload Documents":
-        show_upload_page()
-    elif page == "💬 Query & Chat":
-        show_query_page()
-    elif page == "📝 Summarize":
-        show_summarize_page()
-    elif page == "📊 Generate Report":
-        show_report_page()
-    elif page == "📁 Browse Files":
-        show_files_page()
+
+    # --- MAIN CONTENT ---
+    if main_section == "📁 File Management":
+        tab1, tab2 = st.tabs(["📤 Upload Documents", "📂 Browse Files"])
+        with tab1:
+            show_upload_page()
+        with tab2:
+            show_files_page()
+
+    elif main_section == "💬 Conversation":
+        show_conversation_page()  # we'll define this below
+
+    elif main_section == "🧰 Document Operations":
+        tab1, tab2, tab3 = st.tabs(["🔍 Information Query / Q&A", "📝 Summarization", "📊 Report Generation"])
+        with tab1:
+            show_query_tab()
+        with tab2:
+            show_summarize_page()
+        with tab3:
+            show_report_page()
+
+
+# --- Helper pages (light wrappers) ---
+
+def show_conversation_page():
+    """Conversation page"""
+    show_query_page()
+
+
+def show_query_tab():
+    """Information Query only (without chat)"""
+    st.header("🔍 Information Query / Q&A")
+    st.markdown("Ask specific questions about your indexed documents")
+
+    question = st.text_input("Enter your question:", placeholder="What are the payment terms?")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        top_k = st.slider("Number of documents to search", 1, 20, 5)
+
+    if st.button("Search", type="primary") and question:
+        with st.spinner("Searching and generating answer..."):
+            result = query_documents(question, top_k)
+
+            if "error" in result:
+                st.error(f"Error: {result['error']}")
+            else:
+                st.subheader("Answer:")
+                st.write(result.get("answer", "No answer generated"))
+
+                # Show sources
+                sources = result.get("sources", [])
+                if sources:
+                    st.subheader("Sources:")
+                    for i, source in enumerate(sources, 1):
+                        with st.expander(f"📄 {source.get('file_name', 'Unknown')} (Score: {source.get('score', 0):.2f})"):
+                            st.write(f"Document ID: `{source.get('id')}`")
+
 
 
 def show_upload_page():
@@ -217,109 +257,75 @@ def show_upload_page():
 
 def show_query_page():
     """Query documents and chat page"""
-    st.header("💬 Query & Chat")
     
-    # Create tabs for different modes
-    tab1, tab2 = st.tabs(["💭 Chat", "🔍 Search Documents"])
+    st.header("💭 Chat")
+    st.markdown("Chat with your AI assistant about your documents")
     
-    # Chat Tab
-    with tab1:
-        st.markdown("Chat with your AI assistant about your documents")
-        
-        # Initialize chat history in session state
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-        if "conversation_id" not in st.session_state:
-            import uuid
-            st.session_state.conversation_id = str(uuid.uuid4())
-        
-        # Display chat history
-        for chat in st.session_state.chat_history:
-            with st.chat_message("user"):
-                st.write(chat["user"])
-            with st.chat_message("assistant"):
-                st.write(chat["assistant"])
-                if chat.get("intent"):
-                    st.caption(f"💡 Intent: {chat['intent']} | Confidence: {chat['confidence']:.0%} | Docs used: {chat['docs_used']}")
-        
-        # Chat input
-        user_message = st.chat_input("Type your message here...")
-        
-        if user_message:
-            # Add user message to history
-            with st.chat_message("user"):
-                st.write(user_message)
-            
-            # Get response
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    result = chat_with_assistant(
-                        user_message,
-                        st.session_state.conversation_id
-                    )
-                    
-                    if "error" in result:
-                        st.error(f"Error: {result['error']}")
-                        response_text = "Sorry, I encountered an error. Please try again."
-                        intent = "error"
-                        confidence = 0.0
-                        docs_used = 0
-                    else:
-                        response_text = result.get("message", "I'm not sure how to respond.")
-                        intent = result.get("intent", "unknown")
-                        confidence = result.get("confidence", 0.0)
-                        docs_used = result.get("documents_used", 0)
-                        
-                        st.write(response_text)
-                        st.caption(f"💡 Intent: {intent} | Confidence: {confidence:.0%} | Docs used: {docs_used}")
-            
-            # Save to history
-            st.session_state.chat_history.append({
-                "user": user_message,
-                "assistant": response_text,
-                "intent": intent,
-                "confidence": confidence,
-                "docs_used": docs_used
-            })
-            st.rerun()
-        
-        # Clear history button
-        if st.session_state.chat_history:
-            if st.button("🗑️ Clear Chat History"):
-                st.session_state.chat_history = []
-                import uuid
-                st.session_state.conversation_id = str(uuid.uuid4())
-                st.rerun()
+    # Initialize chat history in session state
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "conversation_id" not in st.session_state:
+        import uuid
+        st.session_state.conversation_id = str(uuid.uuid4())
     
-    # Search Tab
-    with tab2:
-        st.markdown("Search documents with specific questions")
+    # Display chat history
+    for chat in st.session_state.chat_history:
+        with st.chat_message("user"):
+            st.write(chat["user"])
+        with st.chat_message("assistant"):
+            st.write(chat["assistant"])
+            if chat.get("intent"):
+                st.caption(f"💡 Intent: {chat['intent']} | Confidence: {chat['confidence']:.0%} | Docs used: {chat['docs_used']}")
+    
+    # Chat input
+    user_message = st.chat_input("Type your message here...")
+    
+    if user_message:
+        # Add user message to history
+        with st.chat_message("user"):
+            st.write(user_message)
         
-        # Query input
-        question = st.text_input("Enter your question:", placeholder="What are the payment terms?")
-        
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            top_k = st.slider("Number of documents to search", 1, 20, 5)
-        
-        if st.button("Search", type="primary") and question:
-            with st.spinner("Searching and generating answer..."):
-                result = query_documents(question, top_k)
+        # Get response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                result = chat_with_assistant(
+                    user_message,
+                    st.session_state.conversation_id
+                )
                 
                 if "error" in result:
                     st.error(f"Error: {result['error']}")
+                    response_text = "Sorry, I encountered an error. Please try again."
+                    intent = "error"
+                    confidence = 0.0
+                    docs_used = 0
                 else:
-                    st.subheader("Answer:")
-                    st.write(result.get("answer", "No answer generated"))
+                    response_text = result.get("message", "I'm not sure how to respond.")
+                    intent = result.get("intent", "unknown")
+                    confidence = result.get("confidence", 0.0)
+                    docs_used = result.get("documents_used", 0)
                     
-                    # Show sources
-                    sources = result.get("sources", [])
-                    if sources:
-                        st.subheader("Sources:")
-                        for i, source in enumerate(sources, 1):
-                            with st.expander(f"📄 {source.get('file_name', 'Unknown')} (Score: {source.get('score', 0):.2f})"):
-                                st.write(f"Document ID: `{source.get('id')}`")
-
+                    st.write(response_text)
+                    st.caption(f"💡 Intent: {intent} | Confidence: {confidence:.0%} | Docs used: {docs_used}")
+        
+        # Save to history
+        st.session_state.chat_history.append({
+            "user": user_message,
+            "assistant": response_text,
+            "intent": intent,
+            "confidence": confidence,
+            "docs_used": docs_used
+        })
+        st.rerun()
+    
+    # Clear history button
+    if st.session_state.chat_history:
+        if st.button("🗑️ Clear Chat History"):
+            st.session_state.chat_history = []
+            import uuid
+            st.session_state.conversation_id = str(uuid.uuid4())
+            st.rerun()
+    
 
 def show_summarize_page():
     """Summarize documents page"""
