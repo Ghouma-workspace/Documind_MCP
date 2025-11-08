@@ -6,9 +6,9 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from agents.base_agent import BaseAgent
-from mcp.protocol import (
-    MCPMessage,
-    MCPProtocol,
+from aop.protocol import (
+    AOPMessage,
+    AOPProtocol,
     AgentType,
     MessageType,
     RetrievalRequest,
@@ -27,21 +27,21 @@ class RetrieverAgent(BaseAgent):
     - Returns relevant document chunks
     """
     
-    def __init__(self, protocol: MCPProtocol, haystack_pipeline: HaystackPipeline):
+    def __init__(self, protocol: AOPProtocol, haystack_pipeline: HaystackPipeline):
         super().__init__(AgentType.RETRIEVER, "RetrieverAgent")
         self.protocol = protocol
         self.pipeline = haystack_pipeline
         self.retrieval_history = []
     
-    def process(self, message: MCPMessage) -> MCPMessage:
+    async def process(self, message: AOPMessage) -> AOPMessage:
         """Process incoming retrieval request"""
         self.log_info(f"Processing message: {message.message_type}")
         
         try:
             if message.message_type == MessageType.RETRIEVAL_REQUEST:
-                return self._handle_retrieval_request(message)
+                return await self._handle_retrieval_request(message)
             elif message.message_type == MessageType.QUERY:
-                return self._handle_query(message)
+                return await self._handle_query(message)
             else:
                 return self._create_error_response(
                     message,
@@ -52,7 +52,7 @@ class RetrieverAgent(BaseAgent):
             self.log_error(f"Error processing message: {str(e)}", exc_info=True)
             return self._create_error_response(message, "ProcessingError", str(e))
     
-    async def _handle_retrieval_request(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_retrieval_request(self, message: AOPMessage) -> AOPMessage:
         """Handle retrieval request"""
         try:
             # Parse request
@@ -110,7 +110,7 @@ class RetrieverAgent(BaseAgent):
             self.log_error(f"Error handling retrieval request: {str(e)}", exc_info=True)
             return self._create_error_response(message, "RetrievalError", str(e))
     
-    async def _handle_query(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_query(self, message: AOPMessage) -> AOPMessage:
         """Handle general query (convenience method)"""
         try:
             query_text = message.payload.get("query", message.payload.get("question", ""))
@@ -132,6 +132,17 @@ class RetrieverAgent(BaseAgent):
         except Exception as e:
             self.log_error(f"Error handling query: {str(e)}", exc_info=True)
             return self._create_error_response(message, "QueryError", str(e))
+    
+    async def retrieve(self, query: str, top_k: int = 5, mode: str = "hybrid"):
+        """
+        Direct retrieval method (no MCP) - for API endpoints
+        Returns: List of Haystack Documents
+        """
+        self.log_info(f"Direct retrieve: '{query}' (top_k={top_k}, mode={mode})")
+        documents = self.pipeline.retrieve(query=query, top_k=top_k, mode=mode)
+        self.log_info(f"Retrieved {len(documents)} documents")
+        return documents
+
     
     def ingest_documents(self, directory_path: str) -> Dict[str, Any]:
         """Ingest documents from directory"""
@@ -169,7 +180,7 @@ class RetrieverAgent(BaseAgent):
             "recent_queries": self.retrieval_history[-10:] if self.retrieval_history else []
         }
     
-    def _create_error_response(self, original_message: MCPMessage, error_type: str, error_message: str) -> MCPMessage:
+    def _create_error_response(self, original_message: AOPMessage, error_type: str, error_message: str) -> AOPMessage:
         """Create error response"""
         return self.protocol.create_error_response(
             sender=self.agent_type,

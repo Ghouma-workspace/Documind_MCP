@@ -123,7 +123,7 @@ class HaystackPipeline:
         hf_api_key: str = "",
         use_cerebras_api: bool = False,
         cerebras_api_key: str = "",
-        cerebras_model: str = "llama-4-scout-17b-16e-instruct"
+        cerebras_model: str = "llama3.1-8b"
     ):
         self.model_name = model_name
         self.embedding_model = embedding_model

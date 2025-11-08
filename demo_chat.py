@@ -8,7 +8,8 @@ import asyncio
 import sys
 from config import settings
 from pipelines.haystack_pipeline import HaystackPipeline
-from mcp.protocol import MCPProtocol, AgentType, MessageType
+from aop.protocol import AOPProtocol, AgentType, MessageType
+from aop.router import AOPRouter
 from agents.reasoner_agent import ReasonerAgent
 from agents.retriever_agent import RetrieverAgent
 from agents.generator_agent import GeneratorAgent
@@ -43,11 +44,12 @@ async def main():
     except Exception as e:
         print(f"⚠️  Warning: {str(e)}")
     
-    # Initialize MCP protocol
-    protocol = MCPProtocol()
+    # Initialize AOP protocol and router
+    protocol = AOPProtocol()
+    router = AOPRouter(protocol)
     
     # Initialize agents
-    reasoner = ReasonerAgent(protocol)
+    reasoner = ReasonerAgent(protocol, router)  # Pass router to reasoner
     retriever = RetrieverAgent(protocol, pipeline)
     generator = GeneratorAgent(protocol, pipeline)
     automation = AutomationAgent(
@@ -55,6 +57,16 @@ async def main():
         str(settings.templates_path),
         str(settings.outputs_path)
     )
+    
+    # Register agents with router
+    router.register_agent(AgentType.REASONER, reasoner.process)
+    router.register_agent(AgentType.RETRIEVER, retriever.process)
+    router.register_agent(AgentType.GENERATOR, generator.process)
+    router.register_agent(AgentType.AUTOMATION, automation.process)
+    
+    # Start router as background task
+    print("Starting AOP router...")
+    router_task = asyncio.create_task(router.start())
     
     print("\n✅ System ready!")
     print("\nYou can:")
@@ -77,56 +89,67 @@ async def main():
     conversation_id = "chat_demo_001"
     
     # Main chat loop
-    while True:
-        try:
-            # Get user input
-            user_input = input("\n💬 You: ").strip()
-            
-            if not user_input:
-                continue
-            
-            if user_input.lower() in ['quit', 'exit', 'bye', 'goodbye']:
-                print("\n👋 Goodbye! Thanks for using DocuMind!")
+    try:
+        while True:
+            try:
+                # Get user input
+                user_input = input("\n💬 You: ").strip()
+                
+                if not user_input:
+                    continue
+                
+                if user_input.lower() in ['quit', 'exit', 'bye', 'goodbye']:
+                    print("\n👋 Goodbye! Thanks for using DocuMind!")
+                    break
+                
+                # Create chat message
+                chat_msg = protocol.create_message(
+                    message_type=MessageType.CHAT_REQUEST,
+                    sender=AgentType.AUTOMATION,  # Representing the user
+                    receiver=AgentType.REASONER,
+                    payload={
+                        "message": user_input,
+                        "conversation_id": conversation_id,
+                        "context": {}
+                    }
+                )
+                
+                # Process through reasoner
+                print("\n🤔 Assistant is thinking...")
+                response_msg = await reasoner.process(chat_msg)
+                
+                # Extract and display response
+                payload = response_msg.payload
+                intent = payload.get("intent", "unknown")
+                confidence = payload.get("confidence", 0.0)
+                actions = payload.get("actions_taken", [])
+                docs_used = payload.get("documents_used", 0)
+                message = payload.get("message", "I'm not sure how to respond.")
+                
+                print(f"\n🤖 Assistant: {message}")
+                print(f"\n   [Intent: {intent} | Confidence: {confidence:.0%}", end="")
+                if docs_used > 0:
+                    print(f" | Documents: {docs_used}", end="")
+                if actions:
+                    print(f" | Actions: {', '.join(actions)}", end="")
+                print("]")
+                
+            except KeyboardInterrupt:
+                print("\n\n👋 Interrupted. Goodbye!")
                 break
-            
-            # Create chat message
-            chat_msg = protocol.create_message(
-                message_type=MessageType.CHAT_REQUEST,
-                sender=AgentType.AUTOMATION,  # Representing the user
-                receiver=AgentType.REASONER,
-                payload={
-                    "message": user_input,
-                    "conversation_id": conversation_id,
-                    "context": {}
-                }
-            )
-            
-            # Process through reasoner
-            print("\n🤔 Assistant is thinking...")
-            response_msg = await reasoner.process(chat_msg)
-            
-            # Extract and display response
-            payload = response_msg.payload
-            intent = payload.get("intent", "unknown")
-            confidence = payload.get("confidence", 0.0)
-            actions = payload.get("actions_taken", [])
-            docs_used = payload.get("documents_used", 0)
-            message = payload.get("message", "I'm not sure how to respond.")
-            
-            print(f"\n🤖 Assistant: {message}")
-            print(f"\n   [Intent: {intent} | Confidence: {confidence:.0%}", end="")
-            if docs_used > 0:
-                print(f" | Documents: {docs_used}", end="")
-            if actions:
-                print(f" | Actions: {', '.join(actions)}", end="")
-            print("]")
-            
-        except KeyboardInterrupt:
-            print("\n\n👋 Interrupted. Goodbye!")
-            break
-        except Exception as e:
-            print(f"\n❌ Error: {str(e)}")
-            print("Please try again.")
+            except Exception as e:
+                print(f"\n❌ Error: {str(e)}")
+                print("Please try again.")
+    finally:
+        # Cleanup: stop router
+        print("\nShutting down AOP router...")
+        await router.stop()
+        router_task.cancel()
+        try:
+            await router_task
+        except asyncio.CancelledError:
+            pass
+        print("Router stopped.")
 
 
 if __name__ == "__main__":

@@ -8,12 +8,9 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 from agents.base_agent import BaseAgent
-from app.api.generate import run_generate
-from app.api.query import run_query
-from app.api.suammarize import run_summarization
-from mcp.protocol import (
-    MCPMessage,
-    MCPProtocol,
+from aop.protocol import (
+    AOPMessage,
+    AOPProtocol,
     AgentType,
     MessageType,
     TaskType,
@@ -35,13 +32,14 @@ class ReasonerAgent(BaseAgent):
     - Coordinates multi-step workflows
     """
     
-    def __init__(self, protocol: MCPProtocol):
+    def __init__(self, protocol: AOPProtocol, router=None):
         super().__init__(AgentType.REASONER, "ReasonerAgent")
         self.protocol = protocol
+        self.router = router  # Router reference for sending messages
         self.task_history = []
         self.conversation_history = []
     
-    async def process(self, message: MCPMessage) -> MCPMessage:
+    async def process(self, message: AOPMessage) -> AOPMessage:
         """Process incoming message and orchestrate workflow"""
         self.log_info(f"Processing message: {message.message_type}")
         
@@ -62,7 +60,7 @@ class ReasonerAgent(BaseAgent):
             self.log_error(f"Error processing message: {str(e)}", exc_info=True)
             return self._create_error_response(message, "ProcessingError", str(e))
     
-    async def _handle_task_request(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_task_request(self, message: AOPMessage) -> AOPMessage:
         """Handle incoming task request"""
         try:
             task_request = TaskRequest(**message.payload)
@@ -235,8 +233,8 @@ class ReasonerAgent(BaseAgent):
         self.log_debug(f"Created execution plan with {len(plan['steps'])} steps")
         return plan
     
-    async def _execute_plan(self, plan: Dict[str, Any], original_message: MCPMessage) -> Dict[str, Any]:
-        """Execute the planned workflow"""
+    async def _execute_plan(self, plan: Dict[str, Any], original_message: AOPMessage) -> Dict[str, Any]:
+        """Execute the planned workflow by delegating to agents via MCP"""
         results = {
             "steps_completed": 0,
             "total_steps": len(plan["steps"]),
@@ -258,7 +256,7 @@ class ReasonerAgent(BaseAgent):
                 if context:
                     params["context"] = context
                 
-                # Create message to agent
+                # Create message to agent based on action type
                 if action == "retrieve":
                     agent_message = self._create_retrieval_message(agent, params, original_message.message_id)
                 elif action == "generate":
@@ -266,24 +264,53 @@ class ReasonerAgent(BaseAgent):
                 elif action == "automate":
                     agent_message = self._create_automation_message(agent, params, context, original_message.message_id)
                 else:
+                    self.log_warning(f"Unknown action: {action}")
                     continue
                 
-                # Send to protocol for routing
-                # Note: In production, this would go through the router
-                # For now, we'll store the message and return a placeholder
-                step_result = {
-                    "step": step_num,
-                    "action": action,
-                    "agent": agent,
-                    "message_id": agent_message.message_id,
-                    "status": "delegated"
-                }
+                # Send message via router if available, otherwise add to protocol
+                if self.router:
+                    # Send via router and wait for response
+                    response = await self.router.process_and_wait(agent_message, timeout=30.0)
+                    
+                    if response:
+                        # Store the result from the response
+                        step_result = {
+                            "step": step_num,
+                            "action": action,
+                            "agent": agent,
+                            "message_id": agent_message.message_id,
+                            "response_id": response.message_id,
+                            "status": "completed",
+                            "result": response.payload
+                        }
+                        
+                        # Update context with the actual response for next step
+                        context[f"step_{step_num}_result"] = response.payload
+                        context[f"step_{step_num}_message_id"] = response.message_id
+                    else:
+                        # Timeout or no response
+                        step_result = {
+                            "step": step_num,
+                            "action": action,
+                            "agent": agent,
+                            "message_id": agent_message.message_id,
+                            "status": "timeout",
+                            "error": "No response received within timeout"
+                        }
+                        self.log_warning(f"Step {step_num} timed out")
+                else:
+                    # No router - just create the message in protocol (backward compatibility)
+                    step_result = {
+                        "step": step_num,
+                        "action": action,
+                        "agent": agent,
+                        "message_id": agent_message.message_id,
+                        "status": "delegated"
+                    }
+                    context[f"step_{step_num}_result"] = step_result
                 
                 results["outputs"].append(step_result)
                 results["steps_completed"] += 1
-                
-                # Update context for next step
-                context[f"step_{step_num}_result"] = step_result
                 
             except Exception as e:
                 self.log_error(f"Error executing step {step_num}: {str(e)}")
@@ -295,9 +322,9 @@ class ReasonerAgent(BaseAgent):
         
         return results
     
-    def _create_retrieval_message(self, receiver: AgentType, params: Dict, parent_id: str) -> MCPMessage:
+    def _create_retrieval_message(self, receiver: AgentType, params: Dict, parent_id: str) -> AOPMessage:
         """Create retrieval request message"""
-        from mcp.protocol import RetrievalRequest
+        from aop.protocol import RetrievalRequest
         
         retrieval_req = RetrievalRequest(
             query=params.get("query", ""),
@@ -313,9 +340,9 @@ class ReasonerAgent(BaseAgent):
             parent_message_id=parent_id
         )
     
-    def _create_generation_message(self, receiver: AgentType, params: Dict, context: Dict, parent_id: str) -> MCPMessage:
+    def _create_generation_message(self, receiver: AgentType, params: Dict, context: Dict, parent_id: str) -> AOPMessage:
         """Create generation request message"""
-        from mcp.protocol import GenerationRequest
+        from aop.protocol import GenerationRequest
         
         # Build prompt based on context
         prompt = self._build_prompt(params, context)
@@ -336,9 +363,9 @@ class ReasonerAgent(BaseAgent):
             parent_message_id=parent_id
         )
     
-    def _create_automation_message(self, receiver: AgentType, params: Dict, context: Dict, parent_id: str) -> MCPMessage:
+    def _create_automation_message(self, receiver: AgentType, params: Dict, context: Dict, parent_id: str) -> AOPMessage:
         """Create automation request message"""
-        from mcp.protocol import AutomationRequest
+        from aop.protocol import AutomationRequest
         
         auto_req = AutomationRequest(
             action=params.get("action", "save_file"),
@@ -385,7 +412,7 @@ class ReasonerAgent(BaseAgent):
         
         return prompt
     
-    async def _handle_chat_request(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_chat_request(self, message: AOPMessage) -> AOPMessage:
         """Handle incoming chat request with intent detection"""
         try:
             chat_request = ChatRequest(**message.payload)
@@ -492,32 +519,241 @@ class ReasonerAgent(BaseAgent):
         return response, ["greeting_acknowledged"]
     
     async def _handle_question(self, user_message: str) -> tuple[str, list, int]:
-        """Handle question about documents"""
-        self.log_info("Processing question with document retrieval")
+        """Handle question about documents using AOP router"""
+        self.log_info("Processing question with document retrieval via MCP")
         
-        result = await run_query(user_message, top_k=3)
-        response_text = result.answer
-        actions = ["retrieve_documents", "generate_answer"]
-        docs_used = len(result.sources)
-        return response_text, actions, docs_used
+        if not self.router:
+            self.log_error("Router not available, cannot delegate")
+            return "Sorry, I cannot process questions right now.", ["error"], 0
+        
+        # Step 1: Retrieve documents via MCP
+        retrieval_msg = self.protocol.create_message(
+            message_type=MessageType.RETRIEVAL_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.RETRIEVER,
+            payload={"query": user_message, "top_k": 3, "retrieval_mode": "hybrid"}
+        )
+        
+        retrieval_response = await self.router.process_and_wait(retrieval_msg, timeout=30.0)
+        
+        # Check for timeout (None response)
+        if retrieval_response is None:
+            self.log_error("Timeout waiting for retrieval response")
+            return "Request timed out. Please try again.", ["timeout"], 0
+        
+        if retrieval_response.message_type == MessageType.ERROR:
+            return "I encountered an error retrieving documents.", ["retrieval_failed"], 0
+        
+        docs = retrieval_response.payload.get("documents", [])
+        if not docs:
+            return "No relevant documents found.", ["no_documents"], 0
+        
+        # Build context
+        context_parts = [f"[Document {i+1}]\n{doc['content']}...\n" for i, doc in enumerate(docs[:5])]
+        context = "\n".join(context_parts)
+        
+        # Step 2: Generate answer via MCP
+        prompt = f"""Based on the following context, answer the question concisely and accurately.
+
+Context:
+{context}
+
+Question: {user_message}
+
+Answer:"""
+        
+        generation_msg = self.protocol.create_message(
+            message_type=MessageType.GENERATION_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.GENERATOR,
+            payload={
+                "prompt": prompt,
+                "context": context,
+                "max_length": 300,
+                "temperature": 0.7,
+                "task_type": "answer"
+            }
+        )
+        
+        generation_response = await self.router.process_and_wait(generation_msg, timeout=30.0)
+        
+        # Check for timeout
+        if generation_response is None:
+            self.log_error("Timeout waiting for generation response")
+            return "Request timed out while generating answer. Please try again.", ["timeout"], len(docs)
+        
+        if generation_response.message_type == MessageType.ERROR:
+            return "I encountered an error generating an answer.", ["generation_failed"], len(docs)
+        
+        answer = generation_response.payload.get("generated_text", "Unable to generate answer")
+        return answer, ["retrieve_documents", "generate_answer"], len(docs)
+
     
     async def _handle_summarize(self, user_message: str) -> tuple[str, list, int]:
-        """Handle summarization request"""
-        self.log_info("Processing summarization request")
+        """Handle summarization request using AOP router"""
+        self.log_info("Processing summarization request via MCP")
         
-        response = await run_summarization(user_message)
-        actions = ["retrieve_all_documents", "generate_summary"]
-        docs_used = response.documents_used
+        if not self.router:
+            self.log_error("Router not available, cannot delegate")
+            return "Sorry, I cannot process summaries right now.", ["error"], 0
         
-        return response.summary, actions, docs_used
+        # Step 1: Retrieve documents via MCP
+        retrieval_msg = self.protocol.create_message(
+            message_type=MessageType.RETRIEVAL_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.RETRIEVER,
+            payload={"query": user_message, "top_k": 10, "retrieval_mode": "hybrid"}
+        )
+        
+        retrieval_response = await self.router.process_and_wait(retrieval_msg, timeout=30.0)
+        
+        if retrieval_response is None:
+            self.log_error("Timeout waiting for retrieval response")
+            return "Request timed out. Please try again.", ["timeout"], 0
+        
+        if retrieval_response.message_type == MessageType.ERROR:
+            return "I encountered an error retrieving documents.", ["retrieval_failed"], 0
+        
+        docs = retrieval_response.payload.get("documents", [])
+        if not docs:
+            return "No documents found to summarize.", ["no_documents"], 0
+        
+        # Build content to summarize
+        content_parts = [doc["content"] for doc in docs]
+        combined_content = "\n\n".join(content_parts)
+        
+        # Step 2: Generate summary via MCP
+        prompt = f"""Provide a comprehensive summary of the following documents:
+
+{combined_content[:4000]}
+
+Create a well-structured summary that captures the key points, main themes, and important details.
+
+Summary:"""
+        
+        generation_msg = self.protocol.create_message(
+            message_type=MessageType.GENERATION_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.GENERATOR,
+            payload={
+                "prompt": prompt,
+                "max_length": 512,
+                "temperature": 0.7,
+                "task_type": "summarize"
+            }
+        )
+        
+        generation_response = await self.router.process_and_wait(generation_msg, timeout=30.0)
+        
+        if generation_response is None:
+            self.log_error("Timeout waiting for generation response")
+            return "Request timed out while generating summary. Please try again.", ["timeout"], len(docs)
+        
+        if generation_response.message_type == MessageType.ERROR:
+            return "I encountered an error generating a summary.", ["generation_failed"], len(docs)
+        
+        summary = generation_response.payload.get("generated_text", "Unable to generate summary")
+        return summary, ["retrieve_all_documents", "generate_summary"], len(docs)
+
     
     async def _handle_report_request(self, topic: str) -> tuple[str, list, int]:
-        """Handle report generation request"""
-        self.log_info("Processing report generation request")
+        """Handle report generation request using AOP router"""
+        self.log_info("Processing report generation request via MCP")
         
-        response = await run_generate(template="default_report", report_topic=topic, context="project summary", output_format="txt")
-        actions = ["retrieve_documents", "generate_report", "fill_template"]
-        docs_used = 10
+        if not self.router:
+            self.log_error("Router not available, cannot delegate")
+            return "Sorry, I cannot generate reports right now.", ["error"], 0
+        
+        # Step 1: Retrieve documents via MCP
+        retrieval_msg = self.protocol.create_message(
+            message_type=MessageType.RETRIEVAL_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.RETRIEVER,
+            payload={"query": topic, "top_k": 10, "retrieval_mode": "hybrid"}
+        )
+        
+        retrieval_response = await self.router.process_and_wait(retrieval_msg, timeout=30.0)
+        
+        if retrieval_response is None:
+            self.log_error("Timeout waiting for retrieval response")
+            return "Request timed out. Please try again.", ["timeout"], 0
+        
+        if retrieval_response.message_type == MessageType.ERROR:
+            return "I encountered an error retrieving documents.", ["retrieval_failed"], 0
+        
+        docs = retrieval_response.payload.get("documents", [])
+        
+        # Build content
+        content_parts = [doc["content"] for doc in docs[:5]]
+        combined_content = "\n\n".join(content_parts)
+        
+        # Step 2: Generate report content via MCP
+        prompt = f"""Generate a professional report on: {topic}
+
+Based on the following information:
+{combined_content}
+
+Create a structured report with:
+1. Executive Summary
+2. Key Findings
+3. Detailed Analysis
+4. Recommendations
+
+Report:"""
+        
+        generation_msg = self.protocol.create_message(
+            message_type=MessageType.GENERATION_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.GENERATOR,
+            payload={
+                "prompt": prompt,
+                "max_length": 1024,
+                "temperature": 0.7,
+                "task_type": "report"
+            }
+        )
+        
+        generation_response = await self.router.process_and_wait(generation_msg, timeout=30.0)
+        
+        if generation_response is None:
+            self.log_error("Timeout waiting for generation response")
+            return "Request timed out while generating report. Please try again.", ["timeout"], len(docs)
+        
+        if generation_response.message_type == MessageType.ERROR:
+            return "I encountered an error generating the report.", ["generation_failed"], len(docs)
+        
+        report_content = generation_response.payload.get("generated_text", "")
+        
+        # Step 3: Fill template via MCP
+        automation_msg = self.protocol.create_message(
+            message_type=MessageType.AUTOMATION_REQUEST,
+            sender=self.agent_type,
+            receiver=AgentType.AUTOMATION,
+            payload={
+                "action": "fill_template",
+                "template_name": "default_report",
+                "data": {
+                    "title": topic,
+                    "content": report_content,
+                    "date": f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    "metadata": {"description": "project summary"}
+                },
+                "output_format": "txt"
+            }
+        )
+        
+        automation_response = await self.router.process_and_wait(automation_msg, timeout=10.0)
+        
+        if automation_response is None:
+            self.log_error("Timeout waiting for automation response")
+            return f"Report generated but not saved (timeout): {report_content[:200]}...", ["generate_report"], len(docs)
+        
+        if automation_response.message_type == MessageType.ERROR:
+            return f"Report generated but not saved: {report_content[:200]}...", ["generate_report"], len(docs)
+        
+        output_path = automation_response.payload.get("output_path", "unknown")
+        return f"Report generated successfully and saved to: {output_path}", ["retrieve_documents", "generate_report", "fill_template"], len(docs)
+
         
         # Extract string message from GenerateReportResponse
         if response.success:
@@ -529,7 +765,7 @@ class ReasonerAgent(BaseAgent):
         
         return message, actions, docs_used
     
-    async def _handle_task_response(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_task_response(self, message: AOPMessage) -> AOPMessage:
         """Handle response from delegated task"""
         self.log_info(f"Received task response from {message.sender}")
         
@@ -544,7 +780,7 @@ class ReasonerAgent(BaseAgent):
             parent_message_id=message.message_id
         )
     
-    def _create_error_response(self, original_message: MCPMessage, error_type: str, error_message: str) -> MCPMessage:
+    def _create_error_response(self, original_message: AOPMessage, error_type: str, error_message: str) -> AOPMessage:
         """Create error response"""
         return self.protocol.create_error_response(
             sender=self.agent_type,

@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from mcp.protocol import AgentType, MessageType, TaskType
+from aop.protocol import AgentType, MessageType, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -34,28 +34,17 @@ class GenerateReportResponse(BaseModel):
 
 
 async def run_generate(template: str, report_topic: str = "default_report", context: str = "project summary", output_format: str = "txt") -> GenerateReportResponse:
+    """Core report generation logic - calls agents directly (NO MCP)"""
     try:
         app_state = get_app_state()
         
         logger.info(f"Generating report: {template}")
         
-        # Retrieve documents
-        retrieval_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.RETRIEVAL_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.RETRIEVER,
-            payload={
-                "query": report_topic,
-                "top_k": 10,
-                "retrieval_mode": "hybrid"
-            }
-        )
+        # Retrieve documents directly
+        documents = await app_state.retriever_agent.retrieve(report_topic, top_k=10, mode="hybrid")
         
-        retrieval_response = await app_state.retriever_agent.process(retrieval_msg)
-        documents = retrieval_response.payload.get("documents", [])
-        
-        # Generate report content
-        content_parts = [doc["content"] for doc in documents[:5]]
+        # Generate report content directly
+        content_parts = [doc.content for doc in documents[:5]]
         combined_content = "\n\n".join(content_parts)
 
         prompt = f"""Generate a professional report on: {report_topic}
@@ -71,57 +60,38 @@ Create a structured report with:
 
 Report:"""
         
-        generation_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.GENERATION_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.GENERATOR,
-            payload={
-                "prompt": prompt,
-                "max_length": 1024,
-                "temperature": 0.7,
-                "task_type": "report"
-            }
+        report_content = await app_state.generator_agent.generate(
+            prompt=prompt,
+            max_length=1024,
+            temperature=0.7,
+            task_type="report"
         )
         
-        generation_response = await app_state.generator_agent.process(generation_msg)
-        report_content = generation_response.payload.get("generated_text", "")
-        
-        # Fill template
-        # Prepare metadata - ensure it's a dict or None
+        # Fill template directly
         metadata_dict = None
         if isinstance(context, dict):
             metadata_dict = context
         elif isinstance(context, str) and context:
             metadata_dict = {"description": context}
         
-        automation_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.AUTOMATION_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.AUTOMATION,
-            payload={
-                "action": "fill_template",
-                "template_name": template,
-                "data": {
-                    "title": report_topic,
-                    "content": report_content,
-                    "date": "Generated on " + str(Path(__file__).stat().st_mtime),
-                    "metadata": metadata_dict
-                },
-                "output_format": output_format
-            }
+        result = await app_state.automation_agent.fill_and_save(
+            template_name=template,
+            data={
+                "title": report_topic,
+                "content": report_content,
+                "date": "Generated on " + str(Path(__file__).stat().st_mtime),
+                "metadata": metadata_dict
+            },
+            output_format=output_format
         )
         
-        automation_response = await app_state.automation_agent.process(automation_msg)
-        
-        if automation_response.message_type == MessageType.ERROR:
+        if not result.get("success", False):
             raise HTTPException(status_code=500, detail="Report generation failed")
         
-        payload = automation_response.payload
-        
         return GenerateReportResponse(
-            success=payload.get("success", False),
-            output_path=payload.get("output_path"),
-            report_preview=report_content + "..." if len(report_content) > 500 else report_content
+            success=result["success"],
+            output_path=result.get("output_path"),
+            report_preview=report_content[:500] + "..." if len(report_content) > 500 else report_content
         )
         
     except HTTPException:

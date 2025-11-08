@@ -3,6 +3,7 @@ FastAPI Main Application
 Entry point for the DocuMind API
 """
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -42,6 +43,7 @@ class AppState:
         self.retriever_agent = None
         self.generator_agent = None
         self.automation_agent = None
+        self.router_task = None  # Background task for router
         self.initialized = False
 
 
@@ -57,8 +59,8 @@ async def lifespan(app: FastAPI):
     try:
         # Import dependencies
         from pipelines.haystack_pipeline import HaystackPipeline
-        from mcp.protocol import MCPProtocol
-        from mcp.router import MCPRouter
+        from aop.protocol import AOPProtocol
+        from aop.router import AOPRouter
         from agents.reasoner_agent import ReasonerAgent
         from agents.retriever_agent import RetrieverAgent
         from agents.generator_agent import GeneratorAgent
@@ -80,14 +82,14 @@ async def lifespan(app: FastAPI):
             cerebras_model=settings.cerebras_model
         )
         
-        # Initialize MCP protocol and router
-        logger.info("Initializing MCP protocol...")
-        app_state.mcp_protocol = MCPProtocol()
-        app_state.mcp_router = MCPRouter(app_state.mcp_protocol)
+        # Initialize AOP protocol and router
+        logger.info("Initializing AOP protocol...")
+        app_state.mcp_protocol = AOPProtocol()
+        app_state.mcp_router = AOPRouter(app_state.mcp_protocol)
         
-        # Initialize agents
+        # Initialize agents (reasoner needs router reference)
         logger.info("Initializing agents...")
-        app_state.reasoner_agent = ReasonerAgent(app_state.mcp_protocol)
+        app_state.reasoner_agent = ReasonerAgent(app_state.mcp_protocol, app_state.mcp_router)
         app_state.retriever_agent = RetrieverAgent(
             app_state.mcp_protocol,
             app_state.haystack_pipeline
@@ -103,11 +105,16 @@ async def lifespan(app: FastAPI):
         )
         
         # Register agents with router
-        from mcp.protocol import AgentType
+        from aop.protocol import AgentType
         app_state.mcp_router.register_agent(AgentType.REASONER, app_state.reasoner_agent.process)
         app_state.mcp_router.register_agent(AgentType.RETRIEVER, app_state.retriever_agent.process)
         app_state.mcp_router.register_agent(AgentType.GENERATOR, app_state.generator_agent.process)
         app_state.mcp_router.register_agent(AgentType.AUTOMATION, app_state.automation_agent.process)
+        
+        # Start the AOP router as a background task
+        logger.info("Starting AOP router...")
+        app_state.router_task = asyncio.create_task(app_state.mcp_router.start())
+        logger.info("AOP router started as background task")
         
         # Auto-ingest documents from data directory if any exist
         documents_dir = settings.documents_path
@@ -130,6 +137,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down DocuMind application...")
     if app_state.mcp_router:
         await app_state.mcp_router.stop()
+    if app_state.router_task:
+        app_state.router_task.cancel()
+        try:
+            await app_state.router_task
+        except asyncio.CancelledError:
+            logger.info("Router task cancelled")
     logger.info("Application shutdown complete")
 
 

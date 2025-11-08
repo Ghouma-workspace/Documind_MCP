@@ -5,7 +5,7 @@ Base Agent class for all DocuMind agents
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
-from mcp.protocol import MCPMessage, AgentType
+from aop.protocol import AOPMessage, AgentType
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +19,15 @@ class BaseAgent(ABC):
         self.logger = logging.getLogger(f"agent.{self.name}")
     
     @abstractmethod
-    async def process(self, message: MCPMessage) -> MCPMessage:
+    async def process(self, message: AOPMessage) -> AOPMessage:
         """
         Process an incoming message and return a response
         
         Args:
-            message: Incoming MCP message
+            message: Incoming AOP message
             
         Returns:
-            Response MCP message
+            Response AOP message
         """
         pass
     
@@ -47,6 +47,6 @@ class BaseAgent(ABC):
         """Log debug message"""
         self.logger.debug(f"[{self.name}] {msg}")
     
-    def extract_payload(self, message: MCPMessage, key: str, default: Any = None) -> Any:
+    def extract_payload(self, message: AOPMessage, key: str, default: Any = None) -> Any:
         """Extract a value from message payload"""
         return message.payload.get(key, default)

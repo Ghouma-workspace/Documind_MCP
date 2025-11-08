@@ -14,8 +14,7 @@ class Settings(BaseSettings):
     
     # Hugging Face Configuration
     hf_api_key: str = Field(
-        default='',
-        env="HF_API_KEY",
+        default="",
         description="Hugging Face API key for inference"
     )
     use_hf_inference_api: bool = Field(
@@ -25,12 +24,11 @@ class Settings(BaseSettings):
     
     # Cerebras Configuration
     cerebras_api_key: str = Field(
-        default='',
-        env="CEREBRAS_API_KEY",
+        default="",
         description="Cerebras API key for inference"
     )
     cerebras_model: str = Field(
-        default="llama-4-scout-17b-16e-instruct",
+        default="llama3.1-8b",
         description="Cerebras model name for text generation"
     )
     

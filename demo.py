@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import settings
 from pipelines.haystack_pipeline import HaystackPipeline
-from mcp.protocol import MCPProtocol, AgentType, MessageType, TaskType
+from aop.protocol import AOPProtocol, AgentType, MessageType, TaskType
 from agents.reasoner_agent import ReasonerAgent
 from agents.retriever_agent import RetrieverAgent
 from agents.generator_agent import GeneratorAgent
@@ -79,10 +79,10 @@ async def demo_workflow():
     
     print("    ✓ Haystack pipeline ready")
     
-    # Initialize MCP protocol
-    print("  • Initializing MCP protocol...")
-    protocol = MCPProtocol()
-    print("    ✓ MCP protocol ready")
+    # Initialize AOP protocol
+    print("  • Initializing AOP protocol...")
+    protocol = AOPProtocol()
+    print("    ✓ AOP protocol ready")
     
     # Initialize agents
     print("  • Initializing agents...")

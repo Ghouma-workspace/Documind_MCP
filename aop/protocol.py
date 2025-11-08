@@ -1,5 +1,5 @@
 """
-Model Context Protocol (MCP) Implementation
+Agent Orchestration Protocol (AOP) Implementation
 Defines message schemas and protocol logic for agent communication
 """
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class MessageType(str, Enum):
-    """Types of messages in the MCP protocol"""
+    """Types of messages in the AOP protocol"""
     TASK_REQUEST = "task_request"
     TASK_RESPONSE = "task_response"
     QUERY = "query"
@@ -56,8 +56,8 @@ class MessageStatus(str, Enum):
     FAILED = "failed"
 
 
-class MCPMessage(BaseModel):
-    """Base message structure for MCP protocol"""
+class AOPMessage(BaseModel):
+    """Base message structure for AOP protocol"""
     message_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     message_type: MessageType
     sender: AgentType
@@ -165,11 +165,11 @@ class ChatResponse(BaseModel):
     conversation_id: Optional[str] = None
 
 
-class MCPProtocol:
-    """Handles MCP protocol operations and message validation"""
+class AOPProtocol:
+    """Handles AOP protocol operations and message validation"""
     
     def __init__(self):
-        self.message_history: List[MCPMessage] = []
+        self.message_history: List[AOPMessage] = []
         
     def create_message(
         self,
@@ -179,9 +179,9 @@ class MCPProtocol:
         payload: Dict[str, Any],
         parent_message_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> MCPMessage:
-        """Create a new MCP message"""
-        message = MCPMessage(
+    ) -> AOPMessage:
+        """Create a new AOP message"""
+        message = AOPMessage(
             message_type=message_type,
             sender=sender,
             receiver=receiver,
@@ -189,8 +189,23 @@ class MCPProtocol:
             parent_message_id=parent_message_id,
             metadata=metadata or {}
         )
+        
+        # Response messages should start as COMPLETED, not PENDING
+        # This prevents them from being picked up by the router again
+        response_types = [
+            MessageType.TASK_RESPONSE,
+            MessageType.RETRIEVAL_RESPONSE,
+            MessageType.GENERATION_RESPONSE,
+            MessageType.AUTOMATION_RESPONSE,
+            MessageType.CHAT_RESPONSE,
+            MessageType.ERROR,
+            MessageType.STATUS
+        ]
+        if message.message_type in response_types:
+            message.status = MessageStatus.COMPLETED
+        
         self.message_history.append(message)
-        logger.debug(f"Created message {message.message_id}: {sender} -> {receiver}")
+        logger.debug(f"Created message {message.message_id}: {sender} -> {receiver} (status: {message.status})")
         return message
     
     def create_task_request(
@@ -201,7 +216,7 @@ class MCPProtocol:
         parameters: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
         priority: int = 5
-    ) -> MCPMessage:
+    ) -> AOPMessage:
         """Create a task request message"""
         task_request = TaskRequest(
             task_type=task_type,
@@ -226,7 +241,7 @@ class MCPProtocol:
         parent_message_id: str,
         error_message: Optional[str] = None,
         execution_time: Optional[float] = None
-    ) -> MCPMessage:
+    ) -> AOPMessage:
         """Create a task response message"""
         task_response = TaskResponse(
             task_type=task_type,
@@ -252,7 +267,7 @@ class MCPProtocol:
         parent_message_id: Optional[str] = None,
         stack_trace: Optional[str] = None,
         recoverable: bool = False
-    ) -> MCPMessage:
+    ) -> AOPMessage:
         """Create an error response message"""
         error_response = ErrorResponse(
             error_type=error_type,
@@ -268,7 +283,7 @@ class MCPProtocol:
             parent_message_id=parent_message_id
         )
     
-    def get_message_chain(self, message_id: str) -> List[MCPMessage]:
+    def get_message_chain(self, message_id: str) -> List[AOPMessage]:
         """Get the chain of messages related to a specific message"""
         chain = []
         current_id = message_id
@@ -298,7 +313,7 @@ class MCPProtocol:
             return True
         return False
     
-    def get_pending_messages(self, receiver: AgentType) -> List[MCPMessage]:
+    def get_pending_messages(self, receiver: AgentType) -> List[AOPMessage]:
         """Get all pending messages for a specific agent"""
         return [
             m for m in self.message_history

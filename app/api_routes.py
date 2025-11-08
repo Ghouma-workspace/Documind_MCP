@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from app.api.generate import GenerateReportRequest, GenerateReportResponse, run_generate
 from app.api.query import QueryRequest, QueryResponse, run_query
 from app.api.suammarize import SummarizeRequest, SummarizeResponse, run_summarization
-from mcp.protocol import AgentType, MessageType, TaskType
+from aop.protocol import AgentType, MessageType, TaskType, MessageStatus
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,8 @@ async def chat(request: ChatRequest = Body(...)):
         
         logger.info(f"Processing chat message: {request.message[:50]}...")
         
-        # Create MCP chat message
+        # Create MCP chat message (status will be COMPLETED immediately since it's a REQUEST type being used for direct call)
+        # We create it to maintain the message structure but mark it completed to prevent router pickup
         chat_msg = app_state.mcp_protocol.create_message(
             message_type=MessageType.CHAT_REQUEST,
             sender=AgentType.AUTOMATION,
@@ -139,8 +140,14 @@ async def chat(request: ChatRequest = Body(...)):
             }
         )
         
-        # Process through reasoner
+        # Mark as IN_PROGRESS immediately to prevent router from picking it up
+        app_state.mcp_protocol.update_message_status(chat_msg.message_id, MessageStatus.IN_PROGRESS)
+        
+        # Process through reasoner directly
         response_msg = await app_state.reasoner_agent.process(chat_msg)
+        
+        # Mark original message as completed
+        app_state.mcp_protocol.update_message_status(chat_msg.message_id, MessageStatus.COMPLETED)
         
         # Extract response
         payload = response_msg.payload

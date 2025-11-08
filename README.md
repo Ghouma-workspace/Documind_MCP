@@ -2,12 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-DocuMind is a production-ready, modular AI system for intelligent document automation. It combines the **Model Context Protocol (MCP)** for agent orchestration, **Haystack** for RAG-based retrieval, and **open-source Hugging Face LLMs** for local inference.
+DocuMind is a production-ready, modular AI system for intelligent document automation. It uses a custom **Agent Orchestration Protocol (AOP)** for agent coordination, **Haystack** for RAG-based retrieval, and **open-source Hugging Face LLMs** for local inference.
 
 ## 🎯 Features
 
 - **Multi-format Support**: Process PDF, DOCX, and TXT documents
-- **Agentic Architecture**: Coordinated agents using MCP protocol
+- **Agentic Architecture**: Coordinated agents using custom AOP protocol
 - **Intelligent Chat Interface**: Natural conversation with intent detection
 - **Intelligent Retrieval**: Hybrid search with BM25 + semantic embeddings
 - **Flexible LLM Options**: 
@@ -28,8 +28,8 @@ DocuMind/
 │   ├── retriever_agent.py     # Document search and retrieval
 │   ├── generator_agent.py     # Content generation and summarization
 │   └── automation_agent.py    # Template filling and output management
-├── mcp/                 # Model Context Protocol layer
-│   ├── protocol.py            # Message schemas and MCP logic
+├── aop/                 # Agent Orchestration Protocol layer
+│   ├── protocol.py            # Message schemas and AOP logic
 │   └── router.py              # Message routing between agents
 ├── pipelines/           # Haystack pipelines
 │   └── haystack_pipeline.py   # RAG setup with FAISS
@@ -211,7 +211,55 @@ curl -X POST "http://localhost:8000/api/generate-report" \
 - Saves outputs to disk
 - Manages file exports
 
-## 📊 Document Processing Flow
+## � Agent Orchestration Protocol (AOP)
+
+DocuMind uses a custom **Agent Orchestration Protocol (AOP)** for coordinating multiple AI agents. This protocol enables structured communication and workflow management between agents.
+
+### Key Components
+
+**1. AOPMessage**: Structured message format for agent communication
+- Message type (REQUEST/RESPONSE)
+- Sender and receiver agent types
+- Payload with task-specific data
+- Status tracking (PENDING/IN_PROGRESS/COMPLETED/FAILED)
+
+**2. AOPRouter**: Central message routing system
+- Polls for pending messages
+- Routes messages to appropriate agents
+- Tracks message status and completion
+- Handles timeouts and errors
+
+**3. AOPProtocol**: Protocol implementation
+- Creates and validates messages
+- Maintains message history
+- Provides message chain inspection
+
+### Message Flow
+
+```
+User Request
+    ↓
+API Endpoint (direct agent call for simple tasks)
+    ↓
+Reasoner Agent (for complex multi-step workflows)
+    ↓
+Creates AOP Messages → AOPRouter
+    ↓
+Routes to: Retriever → Generator → Automation
+    ↓
+Responses flow back through router
+    ↓
+Final result returned to user
+```
+
+### Benefits
+
+- **Asynchronous**: Non-blocking agent communication
+- **Traceable**: Complete message history and chains
+- **Resilient**: Timeout handling and error recovery
+- **Flexible**: Easy to add new agents and message types
+
+## �📊 Document Processing Flow
 
 1. **Ingestion**: Upload documents via API or UI
 2. **Parsing**: Extract text from PDF/DOCX/TXT
@@ -258,7 +306,7 @@ pipeline = HaystackPipeline(
 - **FastAPI**: REST API framework
 - **Streamlit**: Web UI
 - **Pydantic**: Data validation
-- **MCP**: Agent coordination protocol
+- **AOP**: Custom Agent Orchestration Protocol for multi-agent coordination
 
 
 ## 📄 License
@@ -268,7 +316,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - [Haystack](https://haystack.deepset.ai/) by deepset
-- [Model Context Protocol](https://modelcontextprotocol.io/)
+- Inspired by multi-agent coordination patterns
 
 
 ---

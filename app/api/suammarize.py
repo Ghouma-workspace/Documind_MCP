@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from mcp.protocol import AgentType, MessageType, TaskType
+from aop.protocol import AgentType, MessageType, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -32,29 +32,14 @@ class SummarizeResponse(BaseModel):
 
 
 async def run_summarization(request: str, top_k: int = 10, max_length: int = 512) -> SummarizeResponse:
+    """Core summarization logic - calls agents directly (NO MCP)"""
     try:
         app_state = get_app_state()
         
         logger.info(f"Summarize query: {request}")
         
-        # Retrieve documents
-        retrieval_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.RETRIEVAL_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.RETRIEVER,
-            payload={
-                "query": request,
-                "top_k": top_k,
-                "retrieval_mode": "hybrid"
-            }
-        )
-        
-        retrieval_response = await app_state.retriever_agent.process(retrieval_msg)
-        
-        if retrieval_response.message_type == MessageType.ERROR:
-            raise HTTPException(status_code=500, detail="Retrieval failed")
-        
-        documents = retrieval_response.payload.get("documents", [])
+        # Retrieve documents directly
+        documents = await app_state.retriever_agent.retrieve(request, top_k=top_k, mode="hybrid")
         
         if not documents:
             return SummarizeResponse(
@@ -68,14 +53,14 @@ async def run_summarization(request: str, top_k: int = 10, max_length: int = 512
         sources = []
         
         for doc in documents:
-            content_parts.append(doc["content"])
-            file_name = doc["meta"].get("file_name", "Unknown")
+            content_parts.append(doc.content)
+            file_name = doc.meta.get("file_name", "Unknown")
             if file_name not in sources:
                 sources.append(file_name)
         
         combined_content = "\n\n".join(content_parts)
         
-        # Generate summary
+        # Generate summary directly
         prompt = f"""Provide a comprehensive summary of the following documents:
 
 {combined_content[:4000]}
@@ -84,24 +69,12 @@ Create a well-structured summary that captures the key points, main themes, and 
 
 Summary:"""
         
-        generation_msg = app_state.mcp_protocol.create_message(
-            message_type=MessageType.GENERATION_REQUEST,
-            sender=AgentType.REASONER,
-            receiver=AgentType.GENERATOR,
-            payload={
-                "prompt": prompt,
-                "max_length": max_length,
-                "temperature": 0.7,
-                "task_type": "summarize"
-            }
+        summary = await app_state.generator_agent.generate(
+            prompt=prompt,
+            max_length=max_length,
+            temperature=0.7,
+            task_type="summarize"
         )
-        
-        generation_response = await app_state.generator_agent.process(generation_msg)
-        
-        if generation_response.message_type == MessageType.ERROR:
-            raise HTTPException(status_code=500, detail="Generation failed")
-        
-        summary = generation_response.payload.get("generated_text", "Unable to generate summary")
         
         return SummarizeResponse(
             summary=summary,

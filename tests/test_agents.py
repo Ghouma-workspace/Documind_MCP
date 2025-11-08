@@ -10,7 +10,7 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp.protocol import MCPProtocol, AgentType, MessageType, TaskType
+from aop.protocol import AOPProtocol, AgentType, MessageType, TaskType
 from agents.reasoner_agent import ReasonerAgent
 from agents.base_agent import BaseAgent
 
@@ -49,8 +49,8 @@ class TestReasonerAgent:
     
     @pytest.fixture
     def protocol(self):
-        """Create MCP protocol instance"""
-        return MCPProtocol()
+        """Create AOP protocol instance"""
+        return AOPProtocol()
     
     @pytest.fixture
     def reasoner(self, protocol):
@@ -84,7 +84,7 @@ class TestReasonerAgent:
     
     def test_execution_plan_creation(self, reasoner, protocol):
         """Test execution plan creation for different task types"""
-        from mcp.protocol import TaskRequest
+        from aop.protocol import TaskRequest
         
         # Test summarize task
         summarize_request = TaskRequest(
@@ -112,15 +112,15 @@ class TestReasonerAgent:
 
 
 class TestMCPIntegration:
-    """Test MCP protocol integration with agents"""
+    """Test AOP protocol integration with agents"""
     
     @pytest.fixture
     def protocol(self):
-        """Create MCP protocol instance"""
-        return MCPProtocol()
+        """Create AOP protocol instance"""
+        return AOPProtocol()
     
     def test_message_creation(self, protocol):
-        """Test creating MCP messages"""
+        """Test creating AOP messages"""
         message = protocol.create_message(
             message_type=MessageType.QUERY,
             sender=AgentType.REASONER,

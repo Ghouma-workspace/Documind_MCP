@@ -10,9 +10,9 @@ from datetime import datetime
 from jinja2 import Template, Environment, FileSystemLoader, TemplateNotFound
 
 from agents.base_agent import BaseAgent
-from mcp.protocol import (
-    MCPMessage,
-    MCPProtocol,
+from aop.protocol import (
+    AOPMessage,
+    AOPProtocol,
     AgentType,
     MessageType,
     AutomationRequest,
@@ -33,7 +33,7 @@ class AutomationAgent(BaseAgent):
     
     def __init__(
         self,
-        protocol: MCPProtocol,
+        protocol: AOPProtocol,
         templates_path: str,
         outputs_path: str
     ):
@@ -53,7 +53,7 @@ class AutomationAgent(BaseAgent):
             autoescape=True
         )
     
-    async def process(self, message: MCPMessage) -> MCPMessage:
+    async def process(self, message: AOPMessage) -> AOPMessage:
         """Process incoming automation request"""
         self.log_info(f"Processing message: {message.message_type}")
         
@@ -70,7 +70,7 @@ class AutomationAgent(BaseAgent):
             self.log_error(f"Error processing message: {str(e)}", exc_info=True)
             return self._create_error_response(message, "ProcessingError", str(e))
     
-    async def _handle_automation_request(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_automation_request(self, message: AOPMessage) -> AOPMessage:
         """Handle automation request"""
         try:
             # Parse request
@@ -351,6 +351,28 @@ Metadata:
         
         return "\n".join(lines)
     
+    async def fill_and_save(self, template_name: str, data: Dict[str, Any], output_format: str = "txt") -> Dict[str, Any]:
+        """
+        Direct template filling method (no MCP) - for API endpoints
+        Returns: Dict with success, output_path, message
+        """
+        from aop.protocol import AutomationRequest
+        
+        self.log_info(f"Direct fill_and_save: {template_name}")
+        
+        # Create a request object
+        request = AutomationRequest(
+            action="fill_template",
+            template_name=template_name,
+            data=data,
+            output_format=output_format
+        )
+        
+        # Call internal method
+        result = await self._fill_template(request)
+        return result
+
+    
     def create_template(self, name: str, content: str) -> bool:
         """Create a new template"""
         try:
@@ -393,7 +415,7 @@ Metadata:
             "recent_actions": [h["action"] for h in self.automation_history[-10:]]
         }
     
-    def _create_error_response(self, original_message: MCPMessage, error_type: str, error_message: str) -> MCPMessage:
+    def _create_error_response(self, original_message: AOPMessage, error_type: str, error_message: str) -> AOPMessage:
         """Create error response"""
         return self.protocol.create_error_response(
             sender=self.agent_type,

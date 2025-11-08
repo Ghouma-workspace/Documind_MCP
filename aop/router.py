@@ -1,5 +1,5 @@
 """
-MCP Router - Routes messages between agents
+AOP Router - Routes messages between agents
 Handles message delivery and agent coordination
 """
 
@@ -9,9 +9,9 @@ from typing import Dict, Optional, Callable, Awaitable, List
 from collections import defaultdict
 from datetime import datetime
 
-from mcp.protocol import (
-    MCPMessage,
-    MCPProtocol,
+from aop.protocol import (
+    AOPMessage,
+    AOPProtocol,
     MessageType,
     MessageStatus,
     AgentType
@@ -20,12 +20,12 @@ from mcp.protocol import (
 logger = logging.getLogger(__name__)
 
 
-class MCPRouter:
-    """Routes messages between agents in the MCP system"""
+class AOPRouter:
+    """Routes messages between agents in the AOP system"""
     
-    def __init__(self, protocol: Optional[MCPProtocol] = None):
-        self.protocol = protocol or MCPProtocol()
-        self.agents: Dict[AgentType, Callable[[MCPMessage], Awaitable[MCPMessage]]] = {}
+    def __init__(self, protocol: Optional[AOPProtocol] = None):
+        self.protocol = protocol or AOPProtocol()
+        self.agents: Dict[AgentType, Callable[[AOPMessage], Awaitable[AOPMessage]]] = {}
         self.message_queue: asyncio.Queue = asyncio.Queue()
         self.running = False
         self.stats = defaultdict(int)
@@ -33,7 +33,7 @@ class MCPRouter:
     def register_agent(
         self,
         agent_type: AgentType,
-        handler: Callable[[MCPMessage], Awaitable[MCPMessage]]
+        handler: Callable[[AOPMessage], Awaitable[AOPMessage]]
     ):
         """Register an agent handler for a specific agent type"""
         self.agents[agent_type] = handler
@@ -45,14 +45,14 @@ class MCPRouter:
             del self.agents[agent_type]
             logger.info(f"Unregistered agent: {agent_type}")
     
-    async def send_message(self, message: MCPMessage) -> str:
+    async def send_message(self, message: AOPMessage) -> str:
         """Send a message to the queue for routing"""
         await self.message_queue.put(message)
         self.stats['messages_sent'] += 1
         logger.debug(f"Message {message.message_id} queued for {message.receiver}")
         return message.message_id
     
-    async def route_message(self, message: MCPMessage) -> Optional[MCPMessage]:
+    async def route_message(self, message: AOPMessage) -> Optional[AOPMessage]:
         """Route a message to the appropriate agent"""
         receiver = message.receiver
         
@@ -111,35 +111,41 @@ class MCPRouter:
             return error_response
     
     async def start(self):
-        """Start the message router"""
+        """Start the message router - processes both queued and pending messages"""
         if self.running:
             logger.warning("Router is already running")
             return
         
         self.running = True
-        logger.info("MCP Router started")
+        logger.info("AOP Router started")
         
         while self.running:
             try:
-                # Get message from queue with timeout
-                message = await asyncio.wait_for(
-                    self.message_queue.get(),
-                    timeout=1.0
-                )
+                # Process pending messages from protocol and add to queue
+                await self._check_and_queue_pending_messages()
                 
-                # Route the message
-                response = await self.route_message(message)
+                # Now process messages from queue with timeout
+                try:
+                    message = await asyncio.wait_for(
+                        self.message_queue.get(),
+                        timeout=0.5  # Reduced timeout to check pending more frequently
+                    )
+                    
+                    # Route the message
+                    response = await self.route_message(message)
+                    
+                    # Only queue response if it's NOT a response type itself
+                    # This prevents infinite loops where responses get re-queued
+                    if response and not self._is_response_message(response):
+                        await self.message_queue.put(response)
+                    
+                    # Mark task as done
+                    self.message_queue.task_done()
+                    
+                except asyncio.TimeoutError:
+                    # No messages in queue, continue to check pending
+                    continue
                 
-                # If there's a response and it's not back to the original sender, queue it
-                if response and response.receiver != message.sender:
-                    await self.message_queue.put(response)
-                
-                # Mark task as done
-                self.message_queue.task_done()
-                
-            except asyncio.TimeoutError:
-                # No messages in queue, continue
-                continue
             except Exception as e:
                 logger.error(f"Error in router loop: {str(e)}", exc_info=True)
                 await asyncio.sleep(0.1)
@@ -147,34 +153,84 @@ class MCPRouter:
     async def stop(self):
         """Stop the message router"""
         self.running = False
-        logger.info("MCP Router stopped")
+        logger.info("AOP Router stopped")
     
-    async def process_and_wait(self, message: MCPMessage, timeout: float = 30.0) -> Optional[MCPMessage]:
+    def _is_response_message(self, message: AOPMessage) -> bool:
+        """Check if a message is a response type (to prevent infinite loops)"""
+        response_types = [
+            MessageType.TASK_RESPONSE,
+            MessageType.RETRIEVAL_RESPONSE,
+            MessageType.GENERATION_RESPONSE,
+            MessageType.AUTOMATION_RESPONSE,
+            MessageType.CHAT_RESPONSE,
+            MessageType.ERROR,
+            MessageType.STATUS
+        ]
+        return message.message_type in response_types
+    
+    async def _check_and_queue_pending_messages(self):
+        """Check for pending messages in protocol and add them to the queue"""
+        for agent_type in self.agents.keys():
+            pending = self.protocol.get_pending_messages(agent_type)
+            for message in pending:
+                # Skip if already in queue or being processed
+                if message.status != MessageStatus.PENDING:
+                    continue
+                logger.debug(f"Found pending message {message.message_id} for {agent_type}")
+                await self.message_queue.put(message)
+    
+    async def process_pending_messages(self):
+        """
+        Process all pending messages in the protocol - useful for one-time batch processing.
+        This is different from _check_and_queue_pending_messages which only queues them.
+        This method actually routes them and waits for responses.
+        """
+        logger.info("Processing all pending messages...")
+        processed_count = 0
+        
+        for agent_type in self.agents.keys():
+            pending = self.protocol.get_pending_messages(agent_type)
+            for message in pending:
+                if message.status != MessageStatus.PENDING:
+                    continue
+                    
+                logger.debug(f"Processing pending message {message.message_id} for {agent_type}")
+                response = await self.route_message(message)
+                if response and not self._is_response_message(response):
+                    # Add response back to queue for further routing
+                    await self.message_queue.put(response)
+                processed_count += 1
+        
+        logger.info(f"Processed {processed_count} pending messages")
+        return processed_count
+    
+    async def process_and_wait(self, message: AOPMessage, timeout: float = 30.0) -> Optional[AOPMessage]:
         """Send a message and wait for response"""
-        # Send message
-        message_id = await self.send_message(message)
+        # Add message to protocol's history (it should already be there if created via protocol)
+        # Then mark it for processing
+        await self.message_queue.put(message)
         
         # Wait for response
         start_time = datetime.utcnow()
         while (datetime.utcnow() - start_time).total_seconds() < timeout:
             # Check if message is completed
             msg_status = next(
-                (m for m in self.protocol.message_history if m.message_id == message_id),
+                (m for m in self.protocol.message_history if m.message_id == message.message_id),
                 None
             )
             
             if msg_status and msg_status.status in [MessageStatus.COMPLETED, MessageStatus.FAILED]:
-                # Find response message
+                # Find response message (child message from the receiver back to sender)
                 response = next(
                     (m for m in self.protocol.message_history 
-                     if m.parent_message_id == message_id and m.sender == message.receiver),
+                     if m.parent_message_id == message.message_id and m.sender == message.receiver),
                     None
                 )
                 return response
             
             await asyncio.sleep(0.1)
         
-        logger.warning(f"Timeout waiting for response to message {message_id}")
+        logger.warning(f"Timeout waiting for response to message {message.message_id}")
         return None
     
     async def broadcast_message(

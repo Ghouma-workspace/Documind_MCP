@@ -7,9 +7,9 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 from agents.base_agent import BaseAgent
-from mcp.protocol import (
-    MCPMessage,
-    MCPProtocol,
+from aop.protocol import (
+    AOPMessage,
+    AOPProtocol,
     AgentType,
     MessageType,
     GenerationRequest,
@@ -28,13 +28,13 @@ class GeneratorAgent(BaseAgent):
     - Synthesizes information from retrieved documents
     """
     
-    def __init__(self, protocol: MCPProtocol, haystack_pipeline: HaystackPipeline):
+    def __init__(self, protocol: AOPProtocol, haystack_pipeline: HaystackPipeline):
         super().__init__(AgentType.GENERATOR, "GeneratorAgent")
         self.protocol = protocol
         self.pipeline = haystack_pipeline
         self.generation_history = []
     
-    async def process(self, message: MCPMessage) -> MCPMessage:
+    async def process(self, message: AOPMessage) -> AOPMessage:
         """Process incoming generation request"""
         self.log_info(f"Processing message: {message.message_type}")
         
@@ -51,7 +51,7 @@ class GeneratorAgent(BaseAgent):
             self.log_error(f"Error processing message: {str(e)}", exc_info=True)
             return self._create_error_response(message, "ProcessingError", str(e))
     
-    async def _handle_generation_request(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_generation_request(self, message: AOPMessage) -> AOPMessage:
         """Handle generation request"""
         try:
             # Parse request
@@ -138,6 +138,29 @@ class GeneratorAgent(BaseAgent):
         }
         return instructions.get(task_type, instructions["general"])
     
+    async def generate(self, prompt: str, context: str = "", max_length: int = 300, temperature: float = 0.7, task_type: str = "answer") -> str:
+        """
+        Direct generation method (no MCP) - for API endpoints
+        Returns: Generated text string
+        """
+        self.log_info(f"Direct generate: task={task_type}")
+        
+        # Build full prompt
+        full_prompt = prompt
+        if context:
+            full_prompt = f"Context:\n{context}\n\n{prompt}"
+        
+        generated_text = self.pipeline.generate_with_hf(
+            prompt=full_prompt,
+            max_new_tokens=max_length,
+            temperature=temperature,
+            do_sample=True
+        )
+        
+        self.log_info(f"Generated {len(generated_text)} characters")
+        return generated_text
+
+    
     def summarize_text(self, text: str, max_length: int = 512) -> str:
         """Convenience method to summarize text"""
         self.log_info(f"Summarizing text of length {len(text)}")
@@ -221,7 +244,7 @@ Completed document:"""
             "recent_tasks": [h["task_type"] for h in self.generation_history[-10:]]
         }
     
-    def _create_error_response(self, original_message: MCPMessage, error_type: str, error_message: str) -> MCPMessage:
+    def _create_error_response(self, original_message: AOPMessage, error_type: str, error_message: str) -> AOPMessage:
         """Create error response"""
         return self.protocol.create_error_response(
             sender=self.agent_type,
